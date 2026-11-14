@@ -9,13 +9,20 @@ import app from './app.js';
 import { connectDB } from './config/db.js';
 import { isMember } from './services/conversation-service.js';
 
-// Create HTTP server
+// ==============================
+// HTTP SERVER
+// ==============================
+
 const server = http.createServer(app);
 
-// Initialize Socket.IO
+// ==============================
+// SOCKET.IO CORS CONFIGURATION
+// ==============================
+
 const allowedOrigins = [
   'http://localhost:5173',
   'http://10.171.51.200:5173',
+  'https://vibetalk-frontend-a6ms.vercel.app',
   process.env.CLIENT_URL,
 ].filter(Boolean);
 
@@ -30,12 +37,18 @@ const io = new Server(server, {
 // Make Socket.IO available to Express routes
 app.set('io', io);
 
-// Authenticate Socket.IO connections
+// ==============================
+// SOCKET.IO AUTHENTICATION
+// ==============================
+
 io.use((socket, next) => {
   try {
     const token =
       socket.handshake.auth?.token ||
-      socket.handshake.headers.authorization?.replace(/^Bearer\s+/i, '');
+      socket.handshake.headers.authorization?.replace(
+        /^Bearer\s+/i,
+        ''
+      );
 
     if (!token) {
       return next(new Error('Authentication required'));
@@ -59,17 +72,24 @@ io.use((socket, next) => {
 
     next();
   } catch (error) {
+    console.error('Socket authentication failed:', error.message);
     next(new Error('Invalid or expired token'));
   }
 });
 
-// Socket.IO connection
+// ==============================
+// SOCKET.IO CONNECTION
+// ==============================
+
 io.on('connection', (socket) => {
   const userId = socket.data.userId;
 
   console.log(`User connected: ${userId} (${socket.id})`);
 
-  // Join a conversation room
+  // ------------------------------
+  // JOIN CONVERSATION
+  // ------------------------------
+
   socket.on('conversation:join', async (conversationId) => {
     try {
       if (!conversationId) return;
@@ -84,19 +104,37 @@ io.on('connection', (socket) => {
       }
 
       await socket.join(`conversation:${conversationId}`);
+
+      console.log(
+        `User ${userId} joined conversation ${conversationId}`
+      );
     } catch (error) {
       console.error('Conversation join error:', error.message);
+
+      socket.emit('socket:error', {
+        message: 'Could not join conversation',
+      });
     }
   });
 
-  // Leave a conversation room
+  // ------------------------------
+  // LEAVE CONVERSATION
+  // ------------------------------
+
   socket.on('conversation:leave', (conversationId) => {
     if (!conversationId) return;
 
     socket.leave(`conversation:${conversationId}`);
+
+    console.log(
+      `User ${userId} left conversation ${conversationId}`
+    );
   });
 
-  // Handle typing indicators
+  // ------------------------------
+  // TYPING START
+  // ------------------------------
+
   socket.on('typing:start', async (payload) => {
     try {
       const conversationId = payload?.conversationId;
@@ -107,14 +145,20 @@ io.on('connection', (socket) => {
 
       if (!allowed) return;
 
-      socket.to(`conversation:${conversationId}`).emit('typing:start', {
-        conversationId,
-        userId,
-      });
+      socket
+        .to(`conversation:${conversationId}`)
+        .emit('typing:start', {
+          conversationId,
+          userId,
+        });
     } catch (error) {
       console.error('Typing start error:', error.message);
     }
   });
+
+  // ------------------------------
+  // TYPING STOP
+  // ------------------------------
 
   socket.on('typing:stop', async (payload) => {
     try {
@@ -126,32 +170,46 @@ io.on('connection', (socket) => {
 
       if (!allowed) return;
 
-      socket.to(`conversation:${conversationId}`).emit('typing:stop', {
-        conversationId,
-        userId,
-      });
+      socket
+        .to(`conversation:${conversationId}`)
+        .emit('typing:stop', {
+          conversationId,
+          userId,
+        });
     } catch (error) {
       console.error('Typing stop error:', error.message);
     }
   });
 
-  // Handle disconnection
-  socket.on('disconnect', () => {
-    console.log(`User disconnected: ${userId}`);
+  // ------------------------------
+  // DISCONNECTION
+  // ------------------------------
+
+  socket.on('disconnect', (reason) => {
+    console.log(
+      `User disconnected: ${userId} (${reason})`
+    );
   });
 });
 
-// Start server
+// ==============================
+// START SERVER
+// ==============================
+
 const PORT = process.env.PORT || 5000;
 
 const startServer = async () => {
   try {
+    if (!process.env.JWT_SECRET) {
+      throw new Error('JWT_SECRET environment variable is missing');
+    }
+
     await connectDB();
 
-    server.listen(PORT, () => {
+    server.listen(PORT, '0.0.0.0', () => {
       console.log(`VibeTalk server running on port ${PORT}`);
-      console.log(`API: http://localhost:${PORT}`);
       console.log('Socket.IO is ready');
+      console.log('Allowed frontend origins:', allowedOrigins);
     });
   } catch (error) {
     console.error('Failed to start VibeTalk server:', error);
@@ -160,5 +218,9 @@ const startServer = async () => {
 };
 
 startServer();
+
+// ==============================
+// EXPORTS
+// ==============================
 
 export { app, server, io };
